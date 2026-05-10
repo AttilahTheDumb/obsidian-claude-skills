@@ -1,9 +1,13 @@
 # Obsidian + Claude Code Skills
 
-Six Claude Code slash commands that turn your Obsidian vault into a persistent AI brain — with session memory, automatic context loading, and structured note creation.
+Claude Code slash commands — Obsidian integration for persistent AI memory, plus developer productivity skills.
 
 ## What this does
 
+### Developer skills
+- **`/test-gen`** — Behaviour-first test generation. Analyses what your code *promises* to do, writes tests that catch real bugs, matches your existing test style, and runs them to verify they pass. Works with pytest, Jest, Vitest, Go testing, RSpec, and more.
+
+### Obsidian memory skills
 - **`/resume`** — Loads your vault memory + recent session logs at the start of every session. Claude knows what you were working on, what decisions you made, what's pending.
 - **`/compress`** — Saves the current conversation as a searchable session log before you close. Nothing gets lost.
 - **`/preserve`** — Writes permanent learnings into your vault's `CLAUDE.md`. Auto-archives when it gets too long.
