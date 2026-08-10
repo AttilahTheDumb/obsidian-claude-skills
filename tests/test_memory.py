@@ -216,6 +216,29 @@ class Retrieval(VaultCliBase):
         out = json.loads(self.run_cli("retrieve", "--query", "spaceship banana quantum tuesday"))
         self.assertEqual(out, [])
 
+    def test_stopword_overlap_alone_does_not_clear_the_floor(self):
+        """
+        Regression test: "tell me a joke about spaceships" vs "Favourite coffee
+        order is a flat white" share only the word "a" as raw tokens. Before
+        stopword filtering, that alone pushed the pair's Jaccard relevance high
+        enough to clear the retrieval floor on a five-word content string --
+        i.e. two completely unrelated facts could still surface just because
+        both happened to contain "a", "is", "the", etc.
+        """
+        self.new_fact("Favourite coffee order is a flat white", "coffee-order", confidence=0.8)
+        out = json.loads(self.run_cli("retrieve", "--query", "tell me a joke about spaceships"))
+        self.assertEqual(out, [])
+
+    def test_tokenize_drops_stopwords_but_keeps_content_words(self):
+        tokens = memory.tokenize("This is the Client Compliance Deadline, right?")
+        self.assertNotIn("a", tokens)
+        self.assertNotIn("is", tokens)
+        self.assertNotIn("this", tokens)
+        self.assertNotIn("the", tokens)
+        self.assertIn("client", tokens)
+        self.assertIn("compliance", tokens)
+        self.assertIn("deadline", tokens)
+
     def test_retrieval_bumps_last_retrieved_not_last_reinforced(self):
         record_id = self.new_fact("Prefers terse code reviews", "code-review-style", confidence=0.8)
         before, _ = memory.parse_frontmatter(
@@ -286,6 +309,39 @@ class Supersede(VaultCliBase):
         old_id = self.new_fact("Uses pnpm", "package-manager")
         self.run_cli("supersede", "--old-id", old_id, "--content", "Uses yarn now")
         self.assertTrue((self.vault / "Memory" / "Facts" / f"{old_id}.md").exists())
+
+
+class Merge(VaultCliBase):
+    def test_merge_drops_duplicate_keeps_no_new_record(self):
+        keep_id = self.new_fact("Uses pnpm", "package-manager", confidence=0.8)
+        drop_id = self.new_fact("Uses pnpm for this repo", "package-manager", confidence=0.6)
+        before_count = len(list((self.vault / "Memory" / "Facts").glob("*.md")))
+
+        self.run_cli("merge", "--keep-id", keep_id, "--drop-id", drop_id)
+
+        after_count = len(list((self.vault / "Memory" / "Facts").glob("*.md")))
+        self.assertEqual(before_count, after_count, "merge must not create a new record")
+
+        drop_data, _ = memory.parse_frontmatter((self.vault / "Memory" / "Facts" / f"{drop_id}.md").read_text())
+        self.assertEqual(drop_data["status"], "superseded")
+        self.assertEqual(drop_data["superseded_by"], keep_id)
+
+        keep_data, _ = memory.parse_frontmatter((self.vault / "Memory" / "Facts" / f"{keep_id}.md").read_text())
+        self.assertEqual(keep_data["status"], "active")
+        self.assertEqual(keep_data["reinforce_count"], 1, "merging a duplicate in should reinforce the survivor")
+
+    def test_merge_rejects_same_id(self):
+        keep_id = self.new_fact("Uses pnpm", "package-manager")
+        code, _, stderr = self.run_cli_expect_failure("merge", "--keep-id", keep_id, "--drop-id", keep_id)
+        self.assertNotEqual(code, 0)
+
+    def test_dropped_record_excluded_from_future_candidates(self):
+        keep_id = self.new_fact("Uses pnpm", "package-manager", confidence=0.8)
+        drop_id = self.new_fact("Uses pnpm for this repo", "package-manager", confidence=0.6)
+        self.run_cli("merge", "--keep-id", keep_id, "--drop-id", drop_id)
+        candidates = json.loads(self.run_cli("candidates", "--subject", "package-manager"))
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["id"], keep_id)
 
 
 class Decay(VaultCliBase):
@@ -463,6 +519,36 @@ class Health(VaultCliBase):
         report = json.loads(self.run_cli("health", now="2027-08-01T00:00:00Z"))
         self.assertGreaterEqual(len(report["nearing_decay"]), 0)  # sanity: doesn't crash / valid shape
         self.assertIn("nearing_decay", report)
+
+    def test_decay_never_run_but_store_young_is_not_overdue(self):
+        report = json.loads(self.run_cli("health", now="2026-08-15T00:00:00Z"))
+        self.assertFalse(report["decay_overdue"])
+
+    def test_decay_never_run_and_store_old_is_overdue(self):
+        report = json.loads(self.run_cli("health", now="2026-12-01T00:00:00Z"))
+        self.assertTrue(report["decay_overdue"])
+
+    def test_running_decay_resets_overdue_clock(self):
+        self.run_cli("decay", now="2026-12-01T00:00:00Z")
+        report = json.loads(self.run_cli("health", now="2026-12-02T00:00:00Z"))
+        self.assertFalse(report["decay_overdue"])
+        self.assertEqual(report["last_decay_at"], "2026-12-01T00:00:00Z")
+
+    def test_dry_run_decay_does_not_reset_overdue_clock(self):
+        self.run_cli("decay", "--dry-run", now="2026-12-01T00:00:00Z")
+        report = json.loads(self.run_cli("health", now="2026-12-02T00:00:00Z"))
+        self.assertIsNone(report["last_decay_at"])
+
+
+class ReindexPreservesMetadata(VaultCliBase):
+    def test_reindex_keeps_created_at_and_last_decay_at(self):
+        self.new_fact("Uses pnpm", "package-manager")
+        self.run_cli("decay", now="2026-09-01T00:00:00Z")
+        before = json.loads((self.vault / "Memory" / "index.json").read_text())
+        self.run_cli("reindex")
+        after = json.loads((self.vault / "Memory" / "index.json").read_text())
+        self.assertEqual(before["created_at"], after["created_at"])
+        self.assertEqual(before["last_decay_at"], after["last_decay_at"])
 
 
 if __name__ == "__main__":

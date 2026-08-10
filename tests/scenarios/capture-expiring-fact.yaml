@@ -1,0 +1,19 @@
+name: capture-expiring-fact
+stage: capture
+description: >
+  A fact that is true only until a known date. Tests classification into class: expiring
+  with a correctly extracted expires_at, rather than durable (which would leave a stale
+  fact cluttering retrieval forever) or ephemeral (which would lose it before it's used).
+turns:
+  - "the client compliance review is due August 15th, everything needs to be finalized before then"
+expect:
+  captured: true
+  class: expiring
+  expires_at_date: "2026-08-15"
+  subject_like: client-compliance-deadline
+notes: >
+  Cross-check against scripts/memory.py's decay behavior: an expiring fact should
+  archive at expires_at regardless of confidence (see
+  tests/test_memory.py::Decay::test_expiring_fact_archives_at_expiry_regardless_of_confidence),
+  so getting the date right here matters more than for durable facts, which decay
+  gradually instead of cliffing.

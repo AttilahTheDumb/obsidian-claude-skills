@@ -3,8 +3,48 @@
 Implementing the five-stage memory pipeline (Capture → Consolidate → Retrieve → Reconcile → Decay)
 on top of this repo's existing Obsidian + Claude Code skills.
 
-**Status:** plan only, nothing implemented.
+**Status:** Phases 0–5 implemented (Phase 6, embeddings, remains conditional/deferred — see §5). 45 automated tests passing.
 **Source:** [@0xWast3, "Memory Engineering: The Discipline That Decides Whether Your AI Agent Has a Past"](https://x.com/0xWast3/status/2084625810112032849) (4 Aug 2026).
+
+### What actually landed vs. this plan
+
+The implementation matches this plan's architecture and corrections closely, with a few
+additions made along the way:
+
+- **`merge` subcommand** (not in the original plan): `supersede` always mints a new record,
+  which turned out to be the wrong primitive for collapsing two *existing* near-duplicates
+  found during `/memory-gc` — it would have created a third record instead of removing the
+  duplicate. `merge --keep-id --drop-id` marks the duplicate superseded by the record you're
+  keeping, with no new record, and counts as a reinforcement of the survivor.
+- **Decay staleness tracking** (`last_decay_at` / `created_at` in `index.json`, surfaced by
+  `health` as `decay_overdue`): since this environment has no daemon or cron, §5's "scheduled
+  job" is realized as `/memory-health` checking whether decay is overdue and running it,
+  rather than an actual background schedule. This works only because `compute_confidence` is
+  a pure function of elapsed time (§4.5) — running decay "whenever someone happens to run
+  `/memory-health`" gives identical results to a strict schedule.
+- **§9 open questions, resolved:** `CLAUDE.md`'s pinned block is `<!-- pinned:start/end -->`,
+  owned exclusively by `/preserve`; the generated block is `<!-- generated:start/end -->`,
+  owned exclusively by `render-claude-md`, which replaces only that span and passes every
+  other byte of the file through untouched (tested — see
+  `RenderClaudeMd.test_preserves_content_outside_generated_block`). Migration is
+  non-destructive: `migrate-claude-md` extracts bullets into `Memory/Facts/` and never
+  modifies the source `CLAUDE.md`; `/memory-gc` is the intended cleanup pass once the
+  extraction is trusted. The reinforcement signal (open question 1) is unresolved in this
+  implementation — `reinforce` exists as a primitive and `/compress`'s capture pass calls it
+  on restatement, but there's no attempt at detecting "Claude cited this and the user acted
+  on it," per the plan's own note that this needs real usage data first.
+- Phase 6 (embeddings) was not built. Retrieval relevance is lexical (token Jaccard
+  overlap) per the Phase 3 baseline; per the plan, embeddings are conditional on measured
+  precision@5 falling short, which requires real usage this repo doesn't have yet.
+- **Bug found during implementation, not anticipated by the plan:** raw Jaccard overlap on
+  unfiltered tokens let stopwords ("a", "is", "the"...) alone push completely unrelated
+  short facts above the retrieval floor — e.g. "tell me a joke about spaceships" matched
+  "Favourite coffee order is a flat white" on the shared word "a". Fixed by stripping a
+  stopword list in `tokenize()`; regression-tested in
+  `test_stopword_overlap_alone_does_not_clear_the_floor`. Worth flagging because it's the
+  kind of failure that a scenario-level walkthrough (§6) would likely have caught anyway,
+  but the mechanically-checkable `retrieval-queries.yaml` fixture (`tests/scenarios/`)
+  caught it immediately when actually run against the CLI.
 
 ---
 
@@ -263,15 +303,15 @@ Each phase is independently useful and independently shippable. A five-stage pip
 big-bang is untestable — and the middle stages are meaningless without data, so the ordering follows
 the data dependency, not the article's narrative order.
 
-| Phase | Deliverable | Acceptance criteria |
-|---|---|---|
-| **0. Foundations** | Record schema; `Memory/` scaffolding in `install.sh`; `scripts/memory.py` skeleton (`init`, `reindex`); migration extracting records from an existing `CLAUDE.md` | `./install.sh` on a fresh vault produces valid structure; migration on a 280-line `CLAUDE.md` yields records with provenance; `reindex` rebuilds `index.json` from markdown alone |
-| **1. Capture** | `/remember`; capture pass in `/compress`; rejected-list in the summary | On a 10-scenario corpus: capture precision ≥ 0.8, recall ≥ 0.7 against hand-labelled durable facts |
-| **2. Consolidate** | Dedup-on-write; `/memory-gc` | Re-running a session's captures twice adds zero new records; 10 mentions of one preference collapse to 1 |
-| **3. Retrieve** | `/resume` rewrite; scoring in `memory.py` | precision@5 ≥ 0.7 on scenario queries; unrelated query returns **zero** memories, not five |
-| **4. Reconcile** | Contradiction detection; `Conflicts/`; `/memory-conflicts` | Planted contradictions resolve correctly ≥ 0.85; zero silent resolutions of ambiguous pairs |
-| **5. Decay** | `decay` command; scheduling; `/memory-health` dashboard note | Decay is idempotent (1 run == 30 runs over the same 30 days); unreinforced memories archive on schedule; archived records remain recoverable |
-| **6. Embeddings** *(conditional)* | Local embedding model replaces lexical relevance | Only build if Phase 3 precision@5 < 0.7. Must not add a network dependency |
+| Phase | Deliverable | Acceptance criteria | Status |
+|---|---|---|---|
+| **0. Foundations** | Record schema; `Memory/` scaffolding in `install.sh`; `scripts/memory.py` skeleton (`init`, `reindex`); migration extracting records from an existing `CLAUDE.md` | `./install.sh` on a fresh vault produces valid structure; migration on a 280-line `CLAUDE.md` yields records with provenance; `reindex` rebuilds `index.json` from markdown alone | ✅ Done |
+| **1. Capture** | `/remember`; capture pass in `/compress`; rejected-list in the summary | On a 10-scenario corpus: capture precision ≥ 0.8, recall ≥ 0.7 against hand-labelled durable facts | ✅ Built; precision/recall against `tests/scenarios/` requires live Claude runs, not automated here (see §6) |
+| **2. Consolidate** | Dedup-on-write; `/memory-gc` | Re-running a session's captures twice adds zero new records; 10 mentions of one preference collapse to 1 | ✅ Done — `candidates`/`merge` tested; dedup judgment itself is Claude-side per `/memory-gc` |
+| **3. Retrieve** | `/resume` rewrite; scoring in `memory.py` | precision@5 ≥ 0.7 on scenario queries; unrelated query returns **zero** memories, not five | ✅ Done — floor behavior tested (`test_unrelated_query_returns_nothing_not_noise`); precision@5 not measured (needs corpus + real usage) |
+| **4. Reconcile** | Contradiction detection; `Conflicts/`; `/memory-conflicts` | Planted contradictions resolve correctly ≥ 0.85; zero silent resolutions of ambiguous pairs | ✅ Done — queue/resolution paths tested; "never silently resolves" enforced by construction (`flag-conflict` never auto-applies) |
+| **5. Decay** | `decay` command; scheduling; `/memory-health` dashboard note | Decay is idempotent (1 run == 30 runs over the same 30 days); unreinforced memories archive on schedule; archived records remain recoverable | ✅ Done — idempotency directly tested (`test_decay_is_schedule_independent`, `test_running_decay_twice_is_idempotent`) |
+| **6. Embeddings** *(conditional)* | Local embedding model replaces lexical relevance | Only build if Phase 3 precision@5 < 0.7. Must not add a network dependency | ⏸ Deferred — no measured precision@5 yet to trigger it |
 
 Phase 6 is deliberately last and conditional. Embeddings are the most-reached-for and least
 load-bearing part of a memory system — capture precision and decay correctness determine whether the

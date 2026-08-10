@@ -1,0 +1,44 @@
+name: retrieval-queries
+stage: retrieve
+description: >
+  Unlike the capture/consolidate/reconcile scenarios, this one is mechanically checkable
+  against `memory.py retrieve` directly -- no live model needed -- because ranking a
+  fixed store against a query is exactly what the deterministic core does. Useful as a
+  starting fixture for measuring precision@5 (plan §6) once there's a larger real store to
+  test against; this corpus alone is too small to be a meaningful precision measurement,
+  it's a smoke-level sanity corpus.
+fixture_memories:
+  - content: "Prefers terse code reviews with no preamble"
+    subject: code-review-style
+  - content: "Uses pnpm for this project, not npm or yarn"
+    subject: package-manager
+  - content: "Client Acme's compliance deadline is August 15th"
+    subject: client-acme-deadline
+    class: expiring
+    expires_at: "2026-08-15T00:00:00Z"
+  - content: "Favourite coffee order is a flat white"
+    subject: coffee-order
+  - content: "Prefers dark mode in the editor at work"
+    subject: editor-theme
+    scope: work
+queries:
+  - query: "how should I format this code review comment"
+    expect_top_content: "Prefers terse code reviews with no preamble"
+    expect_excludes: ["Favourite coffee order is a flat white"]
+  - query: "what package manager does this repo use"
+    expect_top_content: "Uses pnpm for this project, not npm or yarn"
+  - query: "when is the acme compliance deadline"
+    expect_top_content: "Client Acme's compliance deadline is August 15th"
+  - query: "tell me a joke about spaceships"
+    expect_empty: true
+    note: >
+      This is the case that directly regression-tests the floor fix in plan §4.3 --
+      the reference retrieve_relevant always returns top_k regardless of relevance;
+      ours must return nothing here.
+how_to_run: >
+  Build a scratch vault, `memory.py new` each fixture_memories entry, then run
+  `memory.py retrieve --query "<query>"` for each queries entry and check the JSON
+  output's ordering/emptiness against expect_top_content / expect_empty. This is exactly
+  what tests/test_memory.py::Retrieval already automates for the two load-bearing cases
+  (relevant-above-floor, unrelated-returns-nothing); this fixture exists as a larger,
+  more realistic corpus for manual spot-checks when tuning the scoring weights.

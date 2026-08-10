@@ -1,0 +1,15 @@
+name: consolidate-related-not-duplicate
+stage: consolidate
+description: >
+  Two facts share a subject but cover different aspects of it. Tests that consolidation
+  doesn't over-merge just because subjects match -- subject-keying is a shortlist
+  mechanism (cheap candidate narrowing), not itself the merge decision.
+existing_memory:
+  content: "Uses pnpm for this project"
+  subject: package-manager
+turns:
+  - "the pnpm workspace root is at the repo root, not in packages/"
+expect:
+  action: insert
+  new_record_created: true
+  both_active: true

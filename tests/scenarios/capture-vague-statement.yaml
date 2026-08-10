@@ -1,0 +1,13 @@
+name: capture-vague-statement
+stage: capture
+description: >
+  A statement that sounds durable-ish but is too vague to act on later. Tests that
+  capture precision doesn't degrade into "capture anything preference-shaped."
+turns:
+  - "I guess I kind of like it when things are cleaner, you know?"
+expect:
+  captured: false
+  # Acceptable alternative: captured with confidence <= 0.6 AND a note that it needs
+  # follow-up specificity. Either outcome is fine; what fails this scenario is
+  # capturing at confidence >= 0.7 as if it were a clear, actionable preference.
+  confidence_max_if_captured: 0.6

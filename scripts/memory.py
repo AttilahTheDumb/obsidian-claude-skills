@@ -256,8 +256,23 @@ def freshness_score(record: Record, now: datetime) -> float:
     return 1.0 / (1.0 + idle_days / FRESHNESS_WINDOW_DAYS)
 
 
+# Common words carry no relevance signal but collide constantly in short
+# fact/query strings ("a", "is", "the" ...), which was inflating Jaccard
+# scores enough to push clearly-unrelated memories above the retrieval
+# floor. Filtered out at tokenize() so both query and fact tokens agree.
+STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "i", "me", "my", "you", "your", "it", "its", "this", "that", "these", "those",
+    "and", "or", "but", "if", "of", "at", "by", "for", "with", "about", "against",
+    "to", "from", "in", "on", "off", "up", "down", "into", "onto", "than", "then",
+    "do", "does", "did", "not", "no", "so", "as", "just", "also",
+    "what", "when", "where", "who", "how", "which",
+}
+
+
 def tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {w for w in words if w not in STOPWORDS and len(w) > 1}
 
 
 def relevance_score(query_tokens: set[str], record: Record) -> float:
@@ -304,7 +319,12 @@ class Vault:
         for d in (self.facts_dir, self.archive_dir, self.conflicts_dir, self.conflicts_resolved_dir):
             d.mkdir(parents=True, exist_ok=True)
         if not self.index_path.exists():
-            self.write_index({"version": 1, "updated_at": to_iso(now_utc()), "memories": {}})
+            self.write_index({
+                "version": 1,
+                "created_at": to_iso(now_utc()),
+                "updated_at": to_iso(now_utc()),
+                "memories": {},
+            })
 
     def read_index(self) -> dict:
         if not self.index_path.exists():
@@ -342,7 +362,11 @@ class Vault:
         self.upsert_index_entry(record)
 
     def reindex(self) -> int:
-        index = {"version": 1, "updated_at": None, "memories": {}}
+        # Rebuild the memories map from disk (the source of truth) but
+        # preserve store-level metadata that isn't derivable from the
+        # markdown files themselves.
+        index = self.read_index()
+        index["memories"] = {}
         count = 0
         for record in self.all_records(include_archived=True):
             index["memories"][record.id] = record.to_index_entry()
@@ -514,6 +538,39 @@ def cmd_supersede(args):
     print(new_record_id)
 
 
+def cmd_merge(args):
+    """
+    Collapse a duplicate/near-duplicate into an existing record, with no
+    new record created (unlike supersede, which always mints one). The
+    duplicate is marked superseded pointing at the kept record; finding
+    it again is itself treated as a reinforcement of the kept record.
+    """
+    vault = Vault(Path(args.vault))
+    now = from_iso(args.now) if args.now else now_utc()
+    keep = vault.find(args.keep_id)
+    drop = vault.find(args.drop_id)
+    if keep is None:
+        print(f"error: no memory {args.keep_id}", file=sys.stderr)
+        sys.exit(1)
+    if drop is None:
+        print(f"error: no memory {args.drop_id}", file=sys.stderr)
+        sys.exit(1)
+    if keep.id == drop.id:
+        print("error: --keep-id and --drop-id must differ", file=sys.stderr)
+        sys.exit(1)
+
+    drop.status = STATUS_SUPERSEDED
+    drop.superseded_by = keep.id
+    vault.save(drop)
+
+    keep.base_confidence = compute_confidence(keep, now)
+    keep.last_reinforced = to_iso(now)
+    keep.reinforce_count += 1
+    vault.save(keep)
+
+    print(json.dumps({"kept": keep.id, "dropped": drop.id}, indent=2))
+
+
 def cmd_decay(args):
     vault = Vault(Path(args.vault))
     now = from_iso(args.now) if args.now else now_utc()
@@ -535,6 +592,11 @@ def cmd_decay(args):
             new_path.write_text(record.render(), encoding="utf-8")
             old_path.unlink()
             vault.upsert_index_entry(record)
+
+    if not args.dry_run:
+        index = vault.read_index()
+        index["last_decay_at"] = to_iso(now)
+        vault.write_index(index)
 
     print(json.dumps({
         "archived": [{"id": r.id, "reason": reason, "confidence": round(c, 4)} for r, reason, c in archived],
@@ -692,6 +754,11 @@ def cmd_health(args):
     orphaned_index_entries = sorted(indexed_ids - disk_ids)
     unindexed_files = sorted(disk_ids - indexed_ids)
 
+    last_decay_at = index.get("last_decay_at")
+    reference_point = last_decay_at or index.get("created_at")
+    days_since_decay = days_between(from_iso(reference_point), now) if reference_point else None
+    decay_overdue = days_since_decay is not None and days_since_decay > args.decay_overdue_days
+
     report = {
         "generated_at": to_iso(now),
         "counts_by_status": by_status,
@@ -701,6 +768,9 @@ def cmd_health(args):
         "orphaned_index_entries": orphaned_index_entries,
         "unindexed_files": unindexed_files,
         "index_in_sync": not orphaned_index_entries and not unindexed_files,
+        "last_decay_at": last_decay_at,
+        "days_since_decay": round(days_since_decay, 1) if days_since_decay is not None else None,
+        "decay_overdue": decay_overdue,
     }
     print(json.dumps(report, indent=2))
 
@@ -862,6 +932,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--expires-at", default=None)
     sp.add_argument("--source", default=None)
 
+    sp = add("merge", "Collapse a duplicate into an existing record (no new record created)", cmd_merge)
+    sp.add_argument("--keep-id", required=True)
+    sp.add_argument("--drop-id", required=True)
+
     sp = add("decay", "Recompute confidence and archive anything below threshold", cmd_decay)
     sp.add_argument("--threshold", type=float, default=ARCHIVE_THRESHOLD)
     sp.add_argument("--dry-run", action="store_true")
@@ -885,6 +959,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("health", "Report store health / drift", cmd_health)
     sp.add_argument("--threshold", type=float, default=ARCHIVE_THRESHOLD)
+    sp.add_argument("--decay-overdue-days", type=float, default=30.0)
 
     sp = add("migrate-claude-md", "Extract bullet facts from an existing CLAUDE.md (non-destructive)", cmd_migrate_claude_md)
     sp.add_argument("--claude-md", default=None)

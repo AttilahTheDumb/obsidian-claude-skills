@@ -1,0 +1,18 @@
+name: capture-ephemeral-noise
+stage: capture
+description: >
+  A session that is pure session-scoped noise -- nothing in it should survive the
+  three-month durability test. Tests that capture is a rejection system first, not a
+  logger that writes something for every turn.
+turns:
+  - "ugh, this bug is so annoying"
+  - "ok wait, I think it's a race condition in the retry logic"
+  - "fixed it, just needed a mutex around the counter"
+  - "cool, moving on to the next ticket"
+expect:
+  captured: false
+  rejected_reasons_mention: ["session-scoped", "true only today", "not durable"]
+notes: >
+  The bug fix itself is arguably worth a session-log entry (that's what /compress's
+  episodic log is for) but not a memory record -- it's not a fact about the user or the
+  project that should shape future sessions, it's a solved problem.
