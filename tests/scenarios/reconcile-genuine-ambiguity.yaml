@@ -1,0 +1,23 @@
+name: reconcile-genuine-ambiguity
+stage: reconcile
+description: >
+  A contradiction where it is genuinely unclear which fact is current -- no recency
+  signal, no explicit correction language, no obvious scope split. Tests the single most
+  important behavior in the whole pipeline: reconciliation must flag this rather than
+  silently pick a side. A system that guesses here is one that will eventually act
+  confidently on a wrong fact (plan §4.4).
+existing_memory:
+  content: "Prefers async standups over live ones"
+  subject: standup-format
+turns:
+  - "live standups are better honestly"
+expect:
+  action: flag_conflict
+  old_status: active   # must remain active/unresolved, not silently superseded
+  new_status: not_written_as_active_fact
+  flagged_as_conflict: true
+notes: >
+  This is the scenario to run first when validating any change to the reconciliation
+  logic in commands/remember.md, commands/compress.md, or commands/memory-gc.md. If a
+  future edit makes this scenario resolve automatically, that edit has broken the
+  pipeline's most load-bearing guarantee, regardless of what else improved.

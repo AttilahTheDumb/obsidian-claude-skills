@@ -1,0 +1,22 @@
+name: reconcile-job-change
+stage: reconcile
+description: >
+  A canonical unambiguous supersession -- the article's running example (job title
+  changes). Tests that reconciliation resolves confidently when the new fact is an
+  explicit, stated update, without requiring the reference implementation's arbitrary
+  ">1 day gap" gate (this plan's implementation deliberately removed that gate, since
+  capture is batched per session and same-session corrections must still resolve).
+existing_memory:
+  content: "Works as a backend engineer at Acme Corp"
+  subject: employer
+turns:
+  - "oh by the way I switched jobs, I'm at a startup called Northwind now, still backend"
+expect:
+  action: supersede
+  old_status: superseded
+  new_status: active
+  flagged_as_conflict: false
+notes: >
+  Same-session variant worth also hand-testing: state the old fact and the correction in
+  the *same* conversation. The gap-gated reference implementation would fail this; ours
+  should not.

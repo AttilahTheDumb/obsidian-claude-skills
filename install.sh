@@ -76,21 +76,43 @@ mkdir -p \
   "$VAULT_PATH/Calendar/Weekly" \
   "$VAULT_PATH/Calendar/Monthly" \
   "$VAULT_PATH/System/Templates" \
-  "$VAULT_PATH/System/Dashboards"
+  "$VAULT_PATH/System/Dashboards" \
+  "$VAULT_PATH/System/Scripts"
 
 echo -e "  ${GREEN}✓${NC} Vault folders created"
 
-# ── 4. Install CLAUDE.md ──────────────────────────────────────────────────────
+# ── 4. Install memory engine ──────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-sed "s|VAULT_PATH|$VAULT_PATH|g" \
-  "$SCRIPT_DIR/vault-template/CLAUDE.md" \
-  > "$VAULT_PATH/CLAUDE.md"
+if ! command -v python3 &>/dev/null; then
+  echo -e "  ${YELLOW}⚠${NC}  python3 not found — the /remember, /memory-gc, /memory-conflicts and"
+  echo "     /memory-health skills need it. Install python3 and re-run this script."
+fi
 
-echo -e "  ${GREEN}✓${NC} CLAUDE.md created at vault root"
+cp "$SCRIPT_DIR/scripts/memory.py" "$VAULT_PATH/System/Scripts/memory.py"
+echo -e "  ${GREEN}✓${NC} Memory engine installed to System/Scripts/memory.py"
 
-# ── 5. Install skills ─────────────────────────────────────────────────────────
+if command -v python3 &>/dev/null; then
+  python3 "$VAULT_PATH/System/Scripts/memory.py" --vault "$VAULT_PATH" init >/dev/null
+  echo -e "  ${GREEN}✓${NC} Memory store initialised at Memory/"
+fi
+
+# ── 5. Install CLAUDE.md ──────────────────────────────────────────────────────
+
+if [[ -f "$VAULT_PATH/CLAUDE.md" ]]; then
+  echo -e "  ${YELLOW}⚠${NC}  CLAUDE.md already exists — leaving it as-is."
+  echo "     Run 'python3 \"$VAULT_PATH/System/Scripts/memory.py\" --vault \"$VAULT_PATH\" migrate-claude-md'"
+  echo "     to extract its bullets into the memory store (non-destructive), then /resume once to"
+  echo "     see the pipeline take over."
+else
+  sed "s|VAULT_PATH|$VAULT_PATH|g" \
+    "$SCRIPT_DIR/vault-template/CLAUDE.md" \
+    > "$VAULT_PATH/CLAUDE.md"
+  echo -e "  ${GREEN}✓${NC} CLAUDE.md created at vault root"
+fi
+
+# ── 6. Install skills ─────────────────────────────────────────────────────────
 
 COMMANDS_DIR="$HOME/.claude/commands"
 mkdir -p "$COMMANDS_DIR"
@@ -102,7 +124,7 @@ done
 
 echo -e "  ${GREEN}✓${NC} Skills installed to ~/.claude/commands/"
 
-# ── 6. Register MCP server ────────────────────────────────────────────────────
+# ── 7. Register MCP server ────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BLUE}Registering obsidian-mcp server...${NC}"
@@ -138,7 +160,7 @@ else
   echo '  }'
 fi
 
-# ── 7. Done ───────────────────────────────────────────────────────────────────
+# ── 8. Done ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
@@ -147,9 +169,11 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo "Restart Claude Code, then try:"
 echo ""
-echo -e "  ${BLUE}/daily-note${NC}    → create today's note"
-echo -e "  ${BLUE}/resume${NC}        → load vault context"
-echo -e "  ${BLUE}/compress${NC}      → save a session before closing"
+echo -e "  ${BLUE}/daily-note${NC}         → create today's note"
+echo -e "  ${BLUE}/resume${NC}             → load relevant memory + recent session logs"
+echo -e "  ${BLUE}/compress${NC}           → save a session before closing (captures memory too)"
+echo -e "  ${BLUE}/remember${NC} <fact>    → pin a durable fact to memory right now"
+echo -e "  ${BLUE}/memory-health${NC}      → check the memory store's health"
 echo ""
 echo "Your vault: $VAULT_PATH"
 echo ""

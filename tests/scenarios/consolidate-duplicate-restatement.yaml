@@ -1,0 +1,19 @@
+name: consolidate-duplicate-restatement
+stage: consolidate
+description: >
+  The same fact, restated in a later session in different words. Tests that consolidation
+  recognizes it as the same fact via subject + semantic judgment, not the reference
+  implementation's SequenceMatcher (which only catches near-identical strings).
+existing_memory:
+  content: "Uses pnpm for this project, not npm or yarn"
+  subject: package-manager
+turns:
+  - "just a reminder, this repo is pnpm-only"
+expect:
+  action: reinforce   # not insert -- this should not create a second record
+  new_record_created: false
+notes: >
+  "Uses pnpm for this project, not npm or yarn" vs "this repo is pnpm-only" share almost
+  no characters in common as strings. A lexical-similarity consolidator (like the
+  article's SequenceMatcher-based one) would score these as unrelated and insert a
+  duplicate. This scenario exists specifically to catch that failure mode.

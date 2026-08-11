@@ -1,0 +1,15 @@
+name: reconcile-context-dependent-coexist
+stage: reconcile
+description: >
+  Two facts that look contradictory in isolation but are both true in different contexts.
+  Tests that reconciliation recognizes scope-splitting instead of forcing a winner.
+existing_memory:
+  content: "Prefers dark mode"
+  subject: editor-theme
+turns:
+  - "actually I like light mode when I'm working outside on weekends, dark mode the rest of the time"
+expect:
+  action: coexist
+  scopes: ["work", "personal"]   # or equivalent distinguishing scope the model chooses
+  both_active: true
+  flagged_as_conflict: false
